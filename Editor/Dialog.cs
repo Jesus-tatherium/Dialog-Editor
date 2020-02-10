@@ -33,11 +33,6 @@ namespace DialogEditor
         {
             get => subDialogNodeList;
         }
-        List<HandleNode> handleNodeList = new List<HandleNode>();
-        public List<HandleNode> HandleNode
-        {
-            get => handleNodeList;
-        }
 
         BeginDialogTagNode beginNode;
         public BeginDialogTagNode BeginNode
@@ -49,12 +44,6 @@ namespace DialogEditor
         {
             get => endNode;
         }
-
-
-        public Dictionary<KeyForCurve, Rect> curvesHitboxes = new Dictionary<KeyForCurve, Rect>();
-        List<KeyForCurve> overlapingHitboxes = new List<KeyForCurve>();
-        int hitboxToCheck = -1;
-        int currentHitbox = -1;
 
         public string dialogName = "New dialog";
         string savePath = "";
@@ -93,8 +82,6 @@ namespace DialogEditor
         Vector2 copyZoomCoordsOrigin;
         float copyZoomScale;
 
-        bool isInBezierMenu = false; // used to highligh curves
-        bool isInMenu = false;
 
         public void Initialize()
         {
@@ -103,10 +90,8 @@ namespace DialogEditor
             DEInstance = DialogEditor.Instance;
             DECtrlZInstance = DEInstance.dialogEditorCtrlZ;
 
-            DEInstance.AddToOnDoubleClick(MouseDoubleClick);
+            DEInstance.AddToOnDoubleClick(ChangeNodeTitle);
             DEInstance.AddToOnMouseHold(DraggedMouse);
-            DEInstance.AddToOnMouseIdle(IdleMouse);
-            DEInstance.AddToOnMouseQuitIdle(QuitIdleMouse);
             DEInstance.AddToOnKeyBoardStopInputs(KeyBoardStopInput);
 
             copy_dNodeForText = null;
@@ -128,19 +113,6 @@ namespace DialogEditor
             {
                 subDialogNodeList.Clear();
             }
-            if (handleNodeList.Count != 0)
-            {
-                handleNodeList.Clear();
-            }
-            if (curvesHitboxes.Count != 0)
-            {
-                curvesHitboxes.Clear();
-            }
-            if (overlapingHitboxes.Count != 0)
-            {
-                overlapingHitboxes.Clear();
-            }
-            hitboxToCheck = -1;
 
             if (beginNode != null)
             {
@@ -152,8 +124,6 @@ namespace DialogEditor
                 //DestroyImmediate(endNode);
                 endNode = null;
             }
-
-            AddDialogNode(new Vector2(350, 100));
 
             //AddDialogNode(new Vector2(50, 50));
             AddTagNode(new Vector2(50, 50), true);
@@ -172,7 +142,7 @@ namespace DialogEditor
                 {
                     if (dNode.connections.ContainsKey(i))
                     {
-                        DrawCurvesForLinkedNodes(dNode, i, dNode.connections[i]);
+                        DrawCurvesForLinkedNodes(dNode, i, dNode.connections[i].windowRect);
                     }
                 }
             }
@@ -180,20 +150,21 @@ namespace DialogEditor
             {
                 if (sdNode.connection != null)
                 {
-                    DrawCurvesForLinkedNodes(sdNode, -1, sdNode.connection);
+                    DrawCurvesForLinkedNodes(sdNode, -1, sdNode.connection.windowRect);
                 }
 
             }
             if (beginNode.firstDialogNode != null)
             {
-                DrawCurvesForLinkedNodes(beginNode, -1, beginNode.firstDialogNode);
+                DrawCurvesForLinkedNodes(beginNode, -1, beginNode.firstDialogNode.windowRect);
             }
 
             if (connectNodeClick)
             {
-                Vector2 target = e.mousePosition;
+                Rect target = new Rect(e.mousePosition.x, e.mousePosition.y - 10, 0, 0);
+                target.position += copyZoomCoordsOrigin;
 
-                DrawBezier(GetStartPosForBezier(selectedNodeToLink, selectedNodeAnswer), target, Color.gray);
+                DrawCurvesForLinkedNodes(selectedNodeToLink, selectedNodeAnswer, target);
             }
 
             if (previousLastDrawnWindow != lastDrawnWindow && nodeList.Count != 0)
@@ -204,402 +175,7 @@ namespace DialogEditor
             }
 
             DrawWindows();
-            Handles.color = Color.blue;
-            //Handles.DrawSolidDisc(e.mousePosition, Vector3.forward * -1, 5f);
         }
-
-        #region Bezier
-        bool StartBezierTest(BaseNode begin, BaseNode end, Vector2 mousePos, int answerNb = -1)
-        {
-            Rect beginInWorld = begin.windowRect.ScaleNodeWindow(copyZoomScale, begin.windowRect.TopLeft());
-            beginInWorld.position -= copyZoomCoordsOrigin * copyZoomScale;
-
-            Rect endInWorld = end.windowRect.ScaleNodeWindow(copyZoomScale, end.windowRect.TopLeft());
-            endInWorld.position -= copyZoomCoordsOrigin * copyZoomScale;
-
-            Vector2 p0;
-
-            if (begin is DialogNode)
-            {
-                p0 = new Vector2(beginInWorld.x + beginInWorld.width, beginInWorld.y + (100 + answerNb * 18) * copyZoomScale);
-            }
-            else if (begin is BeginDialogTagNode)
-            {
-                p0 = new Vector2(beginInWorld.x + beginInWorld.width, beginInWorld.y + 30 * copyZoomScale);
-            }
-            else if (begin is SubDialogNode)
-            {
-                p0 = new Vector2(beginInWorld.x + beginInWorld.width, beginInWorld.y + 45 * copyZoomScale);
-            }
-            else if (begin is HandleNode)
-            {
-                p0 = beginInWorld.position + beginInWorld.size / 2;
-            }
-            else
-            {
-                return false;
-            }
-
-            Vector3 p1 = p0 + Vector2.right * 50 * copyZoomScale;
-
-            Vector2 p3 = endInWorld.position + new Vector2(0, 10 * copyZoomScale);
-            Vector2 p2 = p3 + Vector2.left * 50 * copyZoomScale;
-
-            Vector2 k = mousePos;
-
-            //Debug.Log("pos:" + (k - p0).x / (p3 - p0).x);
-
-            return BezierClickCheck(p0, p1, p2, p3, k, 0.5f);
-        }
-
-        //Alexandre COPPE ( Pacmensch )
-        bool BezierClickCheck(Vector2 p0, Vector2 p1, Vector2 p2, Vector2 p3, Vector2 k, float t, int cpt = 1)
-        {
-            //Calcul bezier - pos de la souris (k)
-            float x = (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * t * t * t + (3 * p0.x - 6 * p1.x + 3 * p2.x) * t * t + (-3 * p0.x + 3 * p1.x) * t + p0.x - k.x;
-            float y = (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t * t * t + (3 * p0.y - 6 * p1.y + 3 * p2.y) * t * t + (-3 * p0.y + 3 * p1.y) * t + p0.y - k.y;
-
-            float precision = 5f;
-
-            Vector2 pente;
-            pente.x = Mathf.Sign(p3.x - p0.x);
-            pente.y = Mathf.Sign(p3.y - p0.y);
-
-            if (cpt > 10) // précision de 1/ 2^n
-            {
-                //Debug.Log("Stack overflow exception");
-                return false;
-            }
-
-            if (Mathf.Abs(x) < precision && Mathf.Abs(y) < precision)
-            {
-                //Debug.Log("oui " /*+ cpt*/);
-                return true;
-            }
-            else if (IsSameSignAndDir(x, y, precision, pente, out int sign))
-            {
-                if (sign == 1 ? true : false)
-                {
-                    //mouse is between begin and current checked point
-                    return BezierClickCheck(p0, p1, p2, p3, k, t - Mathf.Pow((1 / 2f), cpt + 1), cpt + 1);
-                }
-                else
-                {
-                    //mouse is between current and end checked point
-                    return BezierClickCheck(p0, p1, p2, p3, k, t + Mathf.Pow((1 / 2f), cpt + 1), cpt + 1);
-                }
-            }
-            else
-            {
-                //Debug.Log("nope " /*+ cpt*/);
-                return false;
-            }
-        }
-
-        bool IsSameSignAndDir(float x, float y, float prec, Vector2 pente, out int sign)
-        {
-            //multiplying by pente => same orthonormal system
-            bool sameSign = Math.Sign(x) * pente.x == Mathf.Sign(y) * pente.y;
-
-            bool xabs = Mathf.Abs(x) < prec;
-            bool yabs = Mathf.Abs(y) < prec;
-
-            if (sameSign && Mathf.Sign(x) * pente.x == 1) // if both positive 
-            {
-                sign = 1;
-                return true;
-            }
-            if (Mathf.Sign(x) * pente.x == 1 && yabs || Mathf.Sign(y) * pente.y == 1 && xabs) // if one positive and other inside precision
-            {
-                sign = 1;
-                return true;
-            }
-
-            if (sameSign && Mathf.Sign(x) * pente.x == -1) // if both negative
-            {
-                sign = -1;
-                return true;
-            }
-            if (Mathf.Sign(x) * pente.x == -1 && yabs || Mathf.Sign(y) * pente.y == -1 && xabs) // if one negative and other inside precision
-            {
-                sign = -1;
-                return true;
-            }
-
-            sign = 0;
-            return false;
-        }
-
-
-        public static Rect CreateBezierRect(BaseNode nodeA, BaseNode nodeB, int ansNb = -1)
-        {
-            Vector2 nodeARightPos = nodeA.GetTopRightCornerPos();
-            if (nodeA is DialogNode)
-            {
-                nodeARightPos.y += 100 + ansNb * 18;
-            }
-            else if (nodeA is BeginDialogTagNode)
-            {
-                nodeARightPos.y += 30;
-            }
-            else if (nodeA is SubDialogNode)
-            {
-                nodeARightPos.y += 45;
-            }
-            else if (nodeA is HandleNode)
-            {
-                nodeARightPos = (nodeA as HandleNode).GetCenterRight();
-            }
-
-            //create the rect to optimise bezier checks
-            Vector2 hitPos = new Vector2();
-            if (nodeARightPos.x <= nodeB.windowRect.x)
-            {
-                hitPos.x = nodeARightPos.x;
-            }
-            else
-            {
-                hitPos.x = nodeB.windowRect.x;
-            }
-            if (nodeARightPos.y <= nodeB.windowRect.y)
-            {
-                hitPos.y = nodeARightPos.y;
-            }
-            else
-            {
-                hitPos.y = nodeB.windowRect.y;
-            }
-            //10 pixel of marging around the rect
-            Vector2 tempSize = nodeARightPos - nodeB.windowRect.position - new Vector2(10, 10);
-            Vector2 hitSize = new Vector2(Mathf.Abs(tempSize.x) + 20, Mathf.Abs(tempSize.y) + 30);//+10 bc node links 10 pix below pos 
-
-            return new Rect(hitPos - new Vector2(10, 10), hitSize);
-        }
-
-        public void UpdateBezierRectPosition(BaseNode nodeThatMoved)
-        {
-            //foreach (var item in curvesHitboxes)
-            for (int i = 0; i < curvesHitboxes.Count; i++)
-            {
-                KeyForCurve actualKey = curvesHitboxes.Keys.ElementAt(i);
-                if (actualKey.nodeA == nodeThatMoved || actualKey.nodeB == nodeThatMoved)
-                {
-                    curvesHitboxes[actualKey] = CreateBezierRect(actualKey.nodeA, actualKey.nodeB, actualKey.answerNb);
-                }
-            }
-        }
-
-        void RemoveBezier(int _toDel)
-        {
-            Debug.Log("hitB count:" + curvesHitboxes.Count);
-
-            //nodeA is linked to nodeB
-            KeyForCurve key = curvesHitboxes.ElementAt(_toDel).Key;
-            BaseNode nodeA = key.nodeA;
-            BaseNode nodeB = key.nodeB;
-
-            if (nodeB is HandleNode)
-            {
-                if ((nodeB as HandleNode).prev.Count > 1)
-                {
-                    DEInstance.dialogEditorCtrlZ.Add(new CtrlZNodeDeLinked(nodeA, this, -1, nodeB));
-
-                    RemovehandleNode(nodeA as HandleNode);
-                    (nodeB as HandleNode).prev.Remove(nodeA);
-                }
-                else
-                {
-                    RemoveHandle((nodeB as HandleNode));
-                }
-            }
-
-            if (nodeA is HandleNode)
-            {
-                (nodeA as HandleNode).next = null;
-            }
-            else if (nodeA is DialogNode)
-            {
-                if ((nodeA as DialogNode).connections.ContainsValue(nodeB))
-                {
-                    (nodeA as DialogNode).connections.Remove((nodeA as DialogNode).connections.Where(x => x.Value == nodeB).FirstOrDefault().Key);
-                }
-            }
-            else if (nodeA is BeginDialogTagNode)
-            {
-                (nodeA as BeginDialogTagNode).firstDialogNode = null;
-            }
-            else if (nodeA is SubDialogNode)
-            {
-                (nodeA as SubDialogNode).connection = null;
-            }
-
-            curvesHitboxes.Remove(key);
-
-            Debug.Log("hitB count after:" + curvesHitboxes.Count);
-        }
-
-        #region MouseBezier
-        private void TestIfMouseOnBezier(Event e)
-        {
-            List<KeyForCurve> tempKeys = new List<KeyForCurve>();
-            if (overlapingHitboxes.Count == 0)
-            {
-                for (int i = 0; i < curvesHitboxes.Count; i++)
-                {
-                    //Debug.Log(curvesHitboxes.ElementAt(i).Value);
-                    if (DEInstance.ContainsInWorld(curvesHitboxes.ElementAt(i).Value, e.mousePosition))
-                    {
-                        tempKeys.Add(curvesHitboxes.ElementAt(i).Key);
-                    }
-                }
-
-                if (tempKeys.Count <= 0)
-                {
-                    return;
-                }
-
-                for (int i = 0; i < tempKeys.Count; i++)
-                {
-                    KeyForCurve temp = tempKeys[i];
-                    if (!StartBezierTest(temp.nodeA, temp.nodeB, e.mousePosition, temp.answerNb))
-                    {
-                        tempKeys.RemoveAt(i);
-                        i--;
-                    }
-                }
-                overlapingHitboxes = tempKeys;
-
-                if (overlapingHitboxes.Count > 0)
-                {
-                    hitboxToCheck = 0;
-                    currentHitbox = hitboxToCheck;
-                }
-            }
-            else
-            {
-                hitboxToCheck++;
-                if (hitboxToCheck >= overlapingHitboxes.Count)
-                {
-                    hitboxToCheck = 0;
-                }
-                KeyForCurve temp = overlapingHitboxes[hitboxToCheck];
-                if (StartBezierTest(temp.nodeA, temp.nodeB, e.mousePosition, temp.answerNb))
-                {
-                    currentHitbox = hitboxToCheck;
-                }
-            }
-        }
-
-        void ResetMouseOnBezier()
-        {
-            overlapingHitboxes.Clear();
-            hitboxToCheck = -1;
-            currentHitbox = -1;
-        }
-        #endregion
-
-        void CreatePointOnBezier(KeyForCurve key, Vector2 pos)
-        {
-            BaseNode nodeA = key.nodeA;
-            BaseNode nodeB = key.nodeB;
-
-            curvesHitboxes.Remove(key);
-            HandleNode hNode = AddHandleNode(pos, 5f, nodeA, nodeB);
-
-            if (nodeA is DialogNode)
-            {
-                (nodeA as DialogNode).connections.Remove(key.answerNb);
-                (nodeA as DialogNode).connections.Add(key.answerNb, hNode);
-            }
-            else if (nodeA is BeginDialogTagNode)
-            {
-                (nodeA as BeginDialogTagNode).firstDialogNode = hNode;
-            }
-            else if (nodeA is SubDialogNode)
-            {
-                (nodeA as SubDialogNode).connection = hNode;
-            }
-            else if (nodeA is HandleNode)
-            {
-                (nodeA as HandleNode).next = hNode;
-            }
-            curvesHitboxes.Add(new KeyForCurve(nodeA, hNode, key.answerNb), CreateBezierRect(nodeA, hNode, key.answerNb));
-            curvesHitboxes.Add(new KeyForCurve(hNode, nodeB), CreateBezierRect(hNode, nodeB));
-        }
-
-        void RemoveHandle(HandleNode from)
-        {
-            BaseNode head = from;
-
-            do
-            {
-                // usefull bc recursive, the first iteration this is useless => connection is cleaned with RemoveAllConnectionsToThisNode
-                curvesHitboxes.Remove(curvesHitboxes.Keys.Where(x => x.nodeA == head && x.nodeB == (head as HandleNode).next).First());
-                DEInstance.dialogEditorCtrlZ.Add(new CtrlZNodeDeLinked(head, this, -1, (head as HandleNode).next));
-                if (head is HandleNode)
-                {
-                    BaseNode nextHead = (head as HandleNode).next;
-
-                    if (nextHead is HandleNode)
-                    {
-                        if ((nextHead as HandleNode).prev.Count > 1)
-                        {
-                            DEInstance.dialogEditorCtrlZ.Add(new CtrlZNodeDeleted(DECtrlZInstance, head, this));
-                            handleNodeList.Remove(head as HandleNode);
-                            (nextHead as HandleNode).prev.Remove(head);
-                            break;
-                        }
-                        else
-                        {
-                            curvesHitboxes.Remove(new KeyForCurve(head, nextHead));
-                        }
-                    }
-                    head = nextHead;
-                }
-
-            } while (head is HandleNode);
-        }
-
-        Vector3 GetStartPosForBezier(BaseNode _bNode, int answerNb = -1)
-        {
-            Vector3 startPosition = Vector3.zero;
-            Rect start = _bNode.windowRect;
-
-            if (_bNode is DialogNode)
-            {
-                startPosition = new Vector3(start.x + start.width - copyZoomCoordsOrigin.x, start.y + 100 + answerNb * 18 - copyZoomCoordsOrigin.y, 0);
-            }
-            else if (_bNode is BeginDialogTagNode)
-            {
-                startPosition = new Vector3(start.x + start.width - copyZoomCoordsOrigin.x, start.y + 30 - copyZoomCoordsOrigin.y, 0);
-            }
-            else if (_bNode is SubDialogNode)
-            {
-                startPosition = new Vector3(start.x + start.width - copyZoomCoordsOrigin.x, start.y + 45 - copyZoomCoordsOrigin.y, 0);
-            }
-            else if (_bNode is HandleNode)
-            {
-                startPosition = (_bNode as HandleNode).GetCenterRight();
-            }
-            return startPosition;
-        }
-
-        Vector3 GetEndPosForBezier(BaseNode _bNode)
-        {
-            Vector3 endPosition = Vector3.zero;
-
-            if (_bNode is DialogNode || _bNode is BeginDialogTagNode || _bNode is SubDialogNode)
-            {
-                endPosition = new Vector3(_bNode.windowRect.x - copyZoomCoordsOrigin.x, _bNode.windowRect.y + 10 - copyZoomCoordsOrigin.y, 0);
-            }
-            else if (_bNode is HandleNode)
-            {
-                endPosition = (_bNode as HandleNode).GetCenterLeft();
-            }
-
-            return endPosition;
-        }
-        #endregion
 
         #region Inputs
         public void LeftClick(Event e)
@@ -632,17 +208,51 @@ namespace DialogEditor
                             DEInstance.dialogEditorCtrlZ.Add(new CtrlZNodeLinked(selectedNodeToLink, this, -1, clickedNode));
                         }
                     }
-
-                    curvesHitboxes.Add(new KeyForCurve(selectedNodeToLink, clickedNode, selectedNodeAnswer), CreateBezierRect(selectedNodeToLink, clickedNode, selectedNodeAnswer));
                 }
+                /**foreach (DialogNode dNode in nodeList)
+                {
+                    if (DEInstance.ContainsInWorld(dNode.windowRect, mouseClickPos))
+                    {
+                        if (selectedNodeToLink is DialogNode)
+                        {
+                            (selectedNodeToLink as DialogNode).connections.Add(selectedNodeAnswer, dNode);
+                            DEInstance.dialogEditorCtrlZ.Add(new CtrlZNodeLinked(selectedNodeToLink, this, selectedNodeAnswer, dNode));
+                            break;
+                        }
+                        else if (selectedNodeToLink is BeginDialogTagNode)
+                        {
+                            (selectedNodeToLink as BeginDialogTagNode).firstDialogNode = dNode;
+                            DEInstance.dialogEditorCtrlZ.Add(new CtrlZNodeLinked(selectedNodeToLink, this, -1, dNode));
+                            break;
+                        }
+                        else if (selectedNodeToLink is SubDialogNode)
+                        {
+                            (selectedNodeToLink as SubDialogNode).connection = dNode;
+                            DEInstance.dialogEditorCtrlZ.Add(new CtrlZNodeLinked(selectedNodeToLink, this, -1, dNode));
+                            break;
+                        }
+                    }
+                }
+                if (endNode != null)
+                {
+                    if (DEInstance.ContainsInWorld(endNode.windowRect, mouseClickPos))
+                    {
+                        if (selectedNodeToLink is DialogNode)
+                        {
+                            (selectedNodeToLink as DialogNode).connections.Add(selectedNodeAnswer, endNode);
+                        }
+                    }
+                }
+                */
 
-                ResetNodeToLink();
+
+                ResetConnectNode();
 
                 e.Use();
             }
             else
             {
-                // dialog node is the only node that has multiple text fields, hence we will have to check which one was changed when we send the data to the ctrlZ => store a copy
+                // dialog node is the only node that has multiple text fields, hence we will check which one was changed when we send the data to the ctrlZ
                 // if we clicked on an action node it already has the ref of which dialognode text it is changing
                 if (IsNodeCLicked(mouseClickPos, out BaseNode clickedNode))
                 {
@@ -677,22 +287,14 @@ namespace DialogEditor
                     }
                     focusedNodeForText = clickedNode;
                 }
-                else //if we didnt click on anything
-                {
-                    if (DEInstance.MouseIdle)
-                    {
-                        TestIfMouseOnBezier(e);
-                    }
-                }
             }
         }
 
         public void RightClick(Event e)
         {
-            isInMenu = true;
             //SendTextDataToCtrlZ();
             //ResetTextDataCtrlZ();
-            ResetNodeToLink();
+            ResetConnectNode();
 
             Vector2 mouseClickPos = e.mousePosition;
             //check where we clicked
@@ -760,48 +362,9 @@ namespace DialogEditor
 
                 e.Use();
             }
-            else if (HandleNodeClicked(mouseClickPos, out index))
-            {
-                Menu manageNode = new Menu("Manage Node");
-                manageNode.AddButton(new Button("Remove Node", () =>
-                {
-                    RemovehandleNode(handleNodeList[index]);
-                    DEInstance.AddToExecuteLast(() => clearSpawnList());
-                }));
-                ComputeBaseMenu(manageNode, mouseClickPos * (1 / copyZoomScale));
-
-                SetNodeToFront(handleNodeList[index]);
-
-                e.Use();
-            }
-            else if (currentHitbox != -1)
-            {
-                isInBezierMenu = true;
-
-                Menu manageNode = new Menu("Manage Link");
-
-                //if i dont get the id, the ref is lost because mouse move to click on but, and list is erased, and comparing with a copy doesnt work
-                int currentIndex = curvesHitboxes.Keys.ToList().IndexOf(overlapingHitboxes[currentHitbox]);
-               /* manageNode.AddButton(new Button("Break Link", () =>
-                {
-                    RemoveBezier(currentIndex);
-                    ResetMouseOnBezier();
-
-                    DEInstance.AddToExecuteLast(() => clearSpawnList());
-                }));*/
-                /*manageNode.AddButton(new Button("Add Handler", () =>
-                {
-                    CreatePointOnBezier(curvesHitboxes.Keys.ElementAt(currentIndex), DEInstance.GetWorldPos(mouseClickPos));
-                    ResetMouseOnBezier();
-
-                    DEInstance.AddToExecuteLast(() => clearSpawnList());
-                }));*/
-                ComputeBaseMenu(manageNode, mouseClickPos * (1 / copyZoomScale));
-
-                e.Use();
-            }
             else
             {
+
                 ElsewhereMenu(mouseClickPos);
 
                 e.Use();
@@ -816,20 +379,13 @@ namespace DialogEditor
                 if (delta != Vector2.zero)
                 {
                     DECtrlZInstance.Add(new CtrlZNodeMoved(currentDraggedNode, this, beginDraggedNodePos, currentDraggedNode.windowRect.position));
-                    UpdateBezierRectPosition(currentDraggedNode);
-
                     ResetDraggedMouse();
                 }
-
             }
         }
 
         public void RightRelease(Event e)
         {
-            isInBezierMenu = false;
-            isInMenu = false;
-            TestIfMouseOnBezier(e);
-
             if (spawnNodeList.Count != 0)
             {
                 DEInstance.AddToExecuteLast(() => clearSpawnList());
@@ -845,7 +401,6 @@ namespace DialogEditor
         }
         #endregion
 
-        #region TextCtrlZ
         void SendTextDataToCtrlZ()
         {
             if (focusedNodeForText == null)
@@ -939,38 +494,19 @@ namespace DialogEditor
             }
         }
 
-        void ResetTextDataCtrlZ()
-        {
-            copy_dNodeForText = null;
-            focusedNodeForText = null;
-        }
-        #endregion
-
-        #region LinkNodes
-        public void StartLinkNode(BaseNode _node, BaseNode _connection = null, int answer = -1)
-        {
-            connectNodeClick = true;
-            selectedNodeToLink = _node;
-
-            //if changing and already existing link, remove the existing one
-            if (_connection != null)
-            {
-                curvesHitboxes.Remove(new KeyForCurve(_node, _connection, answer));
-            }
-
-            if (answer != -1)
-            {
-                selectedNodeAnswer = answer;
-            }
-        }
-
-        void ResetNodeToLink()
+        void ResetConnectNode()
         {
             selectedNodeToLink = null;
             selectedNodeAnswer = -1;
             connectNodeClick = false;
         }
-        #endregion
+
+        void ResetTextDataCtrlZ()
+        {
+            copy_dNodeForText = null;
+            focusedNodeForText = null;
+        }
+
 
         void ElsewhereMenu(Vector2 mouseClickPos)
         {
@@ -1149,6 +685,7 @@ namespace DialogEditor
             ComputeBaseMenu(manage, mouseClickPos * (1 / copyZoomScale));
         }
 
+
         #region MenuGestion
         public delegate void PosDelegate(Vector2 pos);
 
@@ -1261,10 +798,32 @@ namespace DialogEditor
         }
         #endregion
 
-        #region EventDelegates
-        private void MouseDoubleClick(Event e)
+        private void ChangeNodeTitle(Event e)
         {
-            ChangeNodeTitle(e);
+            for (int i = 0; i < nodeList.Count; i++)
+            {
+                DialogNode node = nodeList[i];
+
+                if (DEInstance.ContainsInWorld(node.titleRect, e.mousePosition))
+                {
+                    RenameNode tempRNode;
+
+                    //if already a RenameNode
+                    if (GetRenameNodeForNode(node, out tempRNode))
+                    {
+                        SetNodeToFront(tempRNode);
+                    }
+                    else
+                    {
+                        tempRNode = AddRenameNode(node);
+                        //remove dialog text to not overlap
+                        RemoveDialogText(node);
+
+                        //swap focus and put window to front
+                        SetNodeToFront(tempRNode);
+                    }
+                }
+            }
         }
 
         private void DraggedMouse(Event e)
@@ -1287,65 +846,13 @@ namespace DialogEditor
             currentDraggedNode = null;
         }
 
-        private void IdleMouse(Event e)
-        {
-            if (!isInMenu)
-            {
-                TestIfMouseOnBezier(e);
-            }
-        }
-
-        private void QuitIdleMouse(Event e)
-        {
-            if (!isInBezierMenu)
-            {
-                ResetMouseOnBezier();
-            }
-        }
-
         private void KeyBoardStopInput(Event e)
         {
             SendTextDataToCtrlZ();
         }
-        #endregion
-
-        /// <summary>
-        /// return true if the function was used
-        /// </summary>
-        /// <param name="e"> current event</param>
-        /// <returns></returns>
-        private bool ChangeNodeTitle(Event e)
-        {
-            for (int i = 0; i < nodeList.Count; i++)
-            {
-                DialogNode node = nodeList[i];
-
-                if (DEInstance.ContainsInWorld(node.titleRect, e.mousePosition))
-                {
-                    RenameNode tempRNode;
-
-                    //if already a RenameNode on this node
-                    if (GetRenameNodeForNode(node, out tempRNode))
-                    {
-                        SetNodeToFront(tempRNode);
-                    }
-                    else
-                    {
-                        tempRNode = AddRenameNode(node);
-                        //remove dialog text to not overlap
-                        RemoveDialogText(node);
-
-                        //swap focus and put window to front
-                        SetNodeToFront(tempRNode);
-                    }
-                    return true;
-                }
-            }
-            return false;
-        }
 
         #region Affichage
-        private void DrawWindows() //handleNode drawn with bezier, not here
+        private void DrawWindows()
         {
             BeginWindows();
             int id = 0;
@@ -1395,6 +902,9 @@ namespace DialogEditor
                 GUI.Window(id, spawnNodeList[i].windowRect, DrawSpawnWindow, spawnNodeList[i].windowTitle);
             }
 
+
+
+
             EndWindows();
 
             //manage windows
@@ -1408,6 +918,7 @@ namespace DialogEditor
                 nodeToPutToFront.Clear();
             }
         }
+
 
         private void DrawTagWindow(int id)
         {
@@ -1465,35 +976,29 @@ namespace DialogEditor
             }
         }
 
-        void DrawCurvesForLinkedNodes(BaseNode from, int answerNb, BaseNode end)
+        void DrawCurvesForLinkedNodes(BaseNode from, int answerNb, Rect end)
         {
-            Color bezierColor = Color.gray;
-            //if currently over some curves
-            if ((!isInMenu || isInBezierMenu) && overlapingHitboxes.Count != 0 && currentHitbox != -1)
+            Rect start = from.windowRect;
+            Vector3 startPosition = Vector3.zero;
+            if (from is DialogNode)
             {
-                if (new KeyForCurve(from, end, answerNb).Compare(overlapingHitboxes[currentHitbox]))
-                {
-                    bezierColor = Color.red;
-                }
+                startPosition = new Vector3(start.x + start.width - copyZoomCoordsOrigin.x, start.y + 100 + answerNb * 18 - copyZoomCoordsOrigin.y, 0);
             }
-            DrawBezier(GetStartPosForBezier(from, answerNb), GetEndPosForBezier(end), bezierColor);
-            if (end is HandleNode)
+            else if (from is BeginDialogTagNode)
             {
-                DrawCurvesForLinkedNodes(end, -1, (end as HandleNode).next);
-
-                end.windowRect.position -= copyZoomCoordsOrigin;
-                (end as HandleNode).DrawWindow();
-                end.windowRect.position += copyZoomCoordsOrigin;
+                startPosition = new Vector3(start.x + start.width - copyZoomCoordsOrigin.x, start.y + 30 - copyZoomCoordsOrigin.y, 0);
             }
-            //Handles.DrawSelectionFrame
-        }
-
-        void DrawBezier(Vector3 startPosition, Vector3 endPosition, Color _bezierColor)
-        {
+            else if (from is SubDialogNode)
+            {
+                startPosition = new Vector3(start.x + start.width - copyZoomCoordsOrigin.x, start.y + 45 - copyZoomCoordsOrigin.y, 0);
+            }
+            Vector3 endPosition = new Vector3(end.x - copyZoomCoordsOrigin.x, end.y + 10 - copyZoomCoordsOrigin.y, 0);
             Vector3 startTangent = startPosition + Vector3.right * 50;
             Vector3 endTangent = endPosition + Vector3.left * 50;
 
-            Handles.DrawBezier(startPosition, endPosition, startTangent, endTangent, _bezierColor, null, 5);
+            Handles.DrawBezier(startPosition, endPosition, startTangent, endTangent, Color.gray, null, 5);
+            //Handles.DotHandleCap()
+            //Handles.DrawSelectionFrame
         }
         #endregion
 
@@ -1794,6 +1299,7 @@ namespace DialogEditor
             DEInstance.dialogEditorCtrlZ.Add(new CtrlZNodeInstanciated(DECtrlZInstance, newDiaNode, this));
             nodeList.Add(newDiaNode);
         }
+        #endregion
 
         public DialogNode AddDialogNodeNoCtrlZ(DialogNode _toCopy)
         {
@@ -1803,7 +1309,6 @@ namespace DialogEditor
 
             return newDiaNode;
         }
-        #endregion
 
         #region ActionNode
         public RenameNode AddRenameNode(DialogNode _target)
@@ -1865,16 +1370,6 @@ namespace DialogEditor
             return AddTagNode(_data.pos, isBegin);
         }
         #endregion
-
-        public HandleNode AddHandleNode(Vector2 _pos, float _radius, BaseNode _bNodeA, BaseNode _bNodeB)
-        {
-            HandleNode newHandleNode = new HandleNode(_pos, _radius, _bNodeA, _bNodeB);
-
-            DEInstance.dialogEditorCtrlZ.Add(new CtrlZNodeInstanciated(DECtrlZInstance, newHandleNode, this));
-            handleNodeList.Add(newHandleNode);
-
-            return newHandleNode;
-        }
         #endregion
 
         void DeleteDialog(Dialog _toDel)
@@ -1910,7 +1405,27 @@ namespace DialogEditor
         #region RemoveNodes
         public void RemoveDialogNode(DialogNode _dNode, bool _addCtrlZ = true)
         {
-            RemoveAllConnectionsToThisNode(_dNode, _addCtrlZ);
+            if (beginNode.firstDialogNode == _dNode)
+            {
+                if (_addCtrlZ)
+                {
+                    Debug.Log("ok");
+                    DEInstance.dialogEditorCtrlZ.Add(new CtrlZNodeDeLinked(beginNode, this, -1, _dNode));
+                }
+                beginNode.firstDialogNode = null;
+            }
+            foreach (DialogNode dNode in nodeList)
+            {
+                List<int> linkToDelete = dNode.connections.Where(x => x.Value == _dNode).Select(x => x.Key).ToList();
+                foreach (int link in linkToDelete)
+                {
+                    if (_addCtrlZ)
+                    {
+                        DEInstance.dialogEditorCtrlZ.Add(new CtrlZNodeDeLinked(dNode, this, link, _dNode));
+                    }
+                    dNode.connections.Remove(link);
+                }
+            }
 
             RemoveRenameNode(_dNode);
             RemoveDialogText(_dNode);
@@ -1926,7 +1441,25 @@ namespace DialogEditor
 
         public void RemoveSubDialogNode(SubDialogNode _sdNode, bool _addCtrlZ = true)
         {
-            RemoveAllConnectionsToThisNode(_sdNode, _addCtrlZ);
+            //remove connections
+            if (beginNode.firstDialogNode == _sdNode)
+            {
+                DEInstance.dialogEditorCtrlZ.Add(new CtrlZNodeDeLinked(beginNode, this, -1, _sdNode));
+                beginNode.firstDialogNode = null;
+            }
+            foreach (DialogNode dNode in nodeList)
+            {
+                List<int> linkToDelete = dNode.connections.Where(x => x.Value == _sdNode).Select(x => x.Key).ToList();
+                foreach (int link in linkToDelete)
+                {
+                    DEInstance.dialogEditorCtrlZ.Add(new CtrlZNodeDeLinked(dNode, this, link, _sdNode));
+                    dNode.connections.Remove(link);
+                }
+            }
+            if (_sdNode.connection != null)
+            {
+                DEInstance.dialogEditorCtrlZ.Add(new CtrlZNodeDeLinked(_sdNode, this, -1, _sdNode.connection));
+            }
 
             //manage opened dialogs
             DeleteDialog(_sdNode.dialog);
@@ -1937,20 +1470,6 @@ namespace DialogEditor
                 DEInstance.dialogEditorCtrlZ.Add(new CtrlZNodeDeleted(DECtrlZInstance, _sdNode, this));
             }
             subDialogNodeList.Remove(_sdNode);
-        }
-
-        public void RemovehandleNode(HandleNode _hNode, bool _addCtrlZ = true)
-        {
-            RemoveAllConnectionsToThisNode(_hNode, _addCtrlZ);
-            if (_addCtrlZ)
-            {
-                DEInstance.dialogEditorCtrlZ.Add(new CtrlZNodeDeleted(DECtrlZInstance, _hNode, this));
-            }
-            RemoveHandle(_hNode);
-
-
-
-            handleNodeList.Remove(_hNode);
         }
 
         /// <summary>
@@ -2064,57 +1583,6 @@ namespace DialogEditor
         }
         #endregion
 
-        void RemoveAllConnectionsToThisNode(BaseNode _bNode, bool _addCtrlZ = true)
-        {
-            if (!(_bNode is EndDialogTagNode) && !(_bNode is DialogNode) && !(_bNode is SubDialogNode) && !(_bNode is HandleNode))
-            {
-                return;
-            }
-            if (beginNode.firstDialogNode == _bNode)
-            {
-                if (_addCtrlZ)
-                {
-                    DEInstance.dialogEditorCtrlZ.Add(new CtrlZNodeDeLinked(beginNode, this, -1, _bNode));
-                }
-                RemoveHitBoxWhere(BeginNode, _bNode);
-                beginNode.firstDialogNode = null;
-            }
-            foreach (DialogNode dNode in nodeList)
-            {
-                List<int> linkToDelete = dNode.connections.Where(x => x.Value == _bNode).Select(x => x.Key).ToList();
-                foreach (int link in linkToDelete)
-                {
-                    if (_addCtrlZ)
-                    {
-                        DEInstance.dialogEditorCtrlZ.Add(new CtrlZNodeDeLinked(dNode, this, link, _bNode));
-                    }
-                    RemoveHitBoxWhere(dNode, _bNode, link);
-                    dNode.connections.Remove(link);
-                }
-            }
-            foreach (SubDialogNode sdNode in subDialogNodeList)
-            {
-                if (sdNode.connection == _bNode)
-                {
-                    if (_addCtrlZ)
-                    {
-                        DEInstance.dialogEditorCtrlZ.Add(new CtrlZNodeDeLinked(sdNode, this, -1, _bNode));
-                    }
-                    RemoveHitBoxWhere(sdNode, _bNode);
-                    sdNode.connection = null;
-                }
-            }
-        }
-
-        void RemoveHitBoxWhere(BaseNode nodeA, BaseNode nodeB, int answer = -1)
-        {
-            KeyForCurve temp = curvesHitboxes.Where(x => x.Key.nodeA == nodeA && x.Key.nodeB == nodeB && x.Key.answerNb == answer).Select(x => x.Key).FirstOrDefault();
-            if (temp != null)
-            {
-                curvesHitboxes.Remove(temp);
-            }
-        }
-
         #region NodeClicked
         bool DialogTagNodeClicked(Vector2 _mousePos, bool isBegin)
         {
@@ -2178,20 +1646,6 @@ namespace DialogEditor
             return false;
         }
 
-        bool HandleNodeClicked(Vector2 _mousePos, out int index)
-        {
-            for (int i = 0; i < handleNodeList.Count; i++)
-            {
-                if (DEInstance.ContainsInWorld(handleNodeList[i].windowRect, _mousePos))
-                {
-                    index = i;
-                    return true;
-                }
-            }
-            index = -1;
-            return false;
-        }
-
         /// <summary>
         /// check all nodes to see if one is clicked,
         /// if its true, returns this node
@@ -2225,11 +1679,6 @@ namespace DialogEditor
             if (SubDialogNodeClicked(_mousePos, out index))
             {
                 _bNode = subDialogNodeList[index];
-                return true;
-            }
-            if (HandleNodeClicked(_mousePos, out index))
-            {
-                _bNode = handleNodeList[index];
                 return true;
             }
             _bNode = null;

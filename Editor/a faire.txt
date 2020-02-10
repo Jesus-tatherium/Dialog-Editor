@@ -1,0 +1,14 @@
+(??)modifier calcul asset cyclique quand debut et fin en negatif
+probleme quand maximise tab puis remet petite -> impossible a fix??
+
+trouver un point dans une bezier curve pour creer des points comme sur unreal ->
+
+https://math.stackexchange.com/questions/2641995/design-an-algorithm-to-check-if-point-lies-on-a-b%C3%A9zier-curve?noredirect=1&lq=1
+https://en.wikipedia.org/wiki/B%C3%A9zier_curve
+
+https://fr.wikiversity.org/wiki/%C3%89quation_du_troisi%C3%A8me_degr%C3%A9/G%C3%A9n%C3%A9ralit%C3%A9s_sur_les_%C3%A9quations_du_troisi%C3%A8me_degr%C3%A9
+https://fr.wikiversity.org/wiki/%C3%89quation_du_troisi%C3%A8me_degr%C3%A9/M%C3%A9thode_de_Cardan
+
+fonctions lambda: https://answers.unity.com/questions/657436/how-to-list-all-the-properties-and-methods-from-th.html
+
+ctrlZ avec les saves
